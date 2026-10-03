@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>ai.multica.dev.postgres</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/zsh</string>
+        <string>-c</string>
+        <string>/opt/homebrew/bin/podman machine start 2&gt;/dev/null; /opt/homebrew/bin/podman start multica-postgres</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>/tmp/multica-podman.log</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/multica-podman.log</string>
+</dict>
+</plist>

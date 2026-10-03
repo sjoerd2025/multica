@@ -1,0 +1,17 @@
+{
+  "name": "jev-permissions",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Auto-approve routine coding-agent shell permission prompts with Jev (typesafe/jev-1.13). One shared risk-list + Decisions gate shared across OpenCode, Claude Code, Codex CLI, and Cursor.",
+  "scripts": {
+    "build": "tsc",
+    "start": "tsx src/opencode-plugin.ts"
+  },
+  "devDependencies": {
+    "@opencode/plugin": "latest",
+    "@types/node": "^22.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0"
+  }
+}

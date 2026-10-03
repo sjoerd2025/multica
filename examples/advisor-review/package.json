@@ -1,0 +1,20 @@
+{
+  "name": "advisor-review",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Token-efficient review with OpenRouter Advisor: cheap executor for routine work, one budget-gated plan-reviewer advisor for uncertain tasks, compact packet, capped advisor output, safe telemetry.",
+  "scripts": {
+    "build": "tsc",
+    "start": "tsx src/index.ts",
+    "verify": "tsx src/verify.ts"
+  },
+  "dependencies": {
+    "@openrouter/sdk": "^0.10.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0"
+  }
+}
