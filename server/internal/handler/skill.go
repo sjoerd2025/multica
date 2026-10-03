@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -162,6 +163,30 @@ type ExistingSkillIdentity struct {
 	CanOverwrite bool   `json:"can_overwrite,omitempty"`
 }
 
+type SkillVersionResponse struct {
+	ID            string  `json:"id"`
+	SkillID       string  `json:"skill_id"`
+	VersionNumber int32   `json:"version_number"`
+	Name          string  `json:"name"`
+	Description   string  `json:"description"`
+	Content       string  `json:"content"`
+	Config        any     `json:"config"`
+	CreatedBy     *string `json:"created_by"`
+	CreatedAt     string  `json:"created_at"`
+}
+
+type SkillVersionFileResponse struct {
+	ID             string `json:"id"`
+	SkillVersionID string `json:"skill_version_id"`
+	Path           string `json:"path"`
+	Content        string `json:"content"`
+}
+
+type SkillVersionWithFilesResponse struct {
+	SkillVersionResponse
+	Files []SkillVersionFileResponse `json:"files"`
+}
+
 func writeSkillImportDuplicateConflict(w http.ResponseWriter, existing ExistingSkillIdentity) {
 	writeJSON(w, http.StatusConflict, map[string]any{
 		"error":          "a skill with this name already exists",
@@ -180,6 +205,29 @@ func skillToResponse(s db.Skill) SkillResponse {
 		CreatedBy:   uuidToPtr(s.CreatedBy),
 		CreatedAt:   timestampToString(s.CreatedAt),
 		UpdatedAt:   timestampToString(s.UpdatedAt),
+	}
+}
+
+func skillVersionToResponse(v db.SkillVersion) SkillVersionResponse {
+	return SkillVersionResponse{
+		ID:            uuidToString(v.ID),
+		SkillID:       uuidToString(v.SkillID),
+		VersionNumber: v.VersionNumber,
+		Name:          v.Name,
+		Description:   v.Description,
+		Content:       v.Content,
+		Config:        decodeSkillConfig(v.Config),
+		CreatedBy:     uuidToPtr(v.CreatedBy),
+		CreatedAt:     timestampToString(v.CreatedAt),
+	}
+}
+
+func skillVersionFileToResponse(f db.SkillVersionFile) SkillVersionFileResponse {
+	return SkillVersionFileResponse{
+		ID:             uuidToString(f.ID),
+		SkillVersionID: uuidToString(f.SkillVersionID),
+		Path:           f.Path,
+		Content:        f.Content,
 	}
 }
 
@@ -635,6 +683,59 @@ func (h *Handler) UpdateSkill(w http.ResponseWriter, r *http.Request) {
 
 	qtx := h.Queries.WithTx(tx)
 
+	// Create a version snapshot of the current skill state before updating
+	latestVersionResult, err := qtx.GetLatestVersionNumber(r.Context(), skill.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to get latest version number")
+		return
+	}
+	var latestVersion int32
+	if latestVersionResult != nil {
+		if v, ok := latestVersionResult.(int64); ok {
+			latestVersion = int32(v)
+		} else if v, ok := latestVersionResult.(int32); ok {
+			latestVersion = v
+		}
+	}
+	nextVersionNum := latestVersion + 1
+
+	createdByUUID := skill.CreatedBy
+	if userID := requestUserID(r); userID != "" {
+		createdByUUID = parseUUID(userID)
+	}
+
+	version, err := qtx.CreateSkillVersion(r.Context(), db.CreateSkillVersionParams{
+		SkillID:       skill.ID,
+		VersionNumber: nextVersionNum,
+		Name:          skill.Name,
+		Description:   skill.Description,
+		Content:       skill.Content,
+		Config:        skill.Config,
+		CreatedBy:     createdByUUID,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to create skill version: "+err.Error())
+		return
+	}
+
+	// Save current skill files to the version
+	currentFiles, err := qtx.ListSkillFiles(r.Context(), skill.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list skill files for versioning")
+		return
+	}
+	for _, file := range currentFiles {
+		_, err := qtx.CreateSkillVersionFile(r.Context(), db.CreateSkillVersionFileParams{
+			SkillVersionID: version.ID,
+			Path:           file.Path,
+			Content:        file.Content,
+		})
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to create skill version file: "+err.Error())
+			return
+		}
+	}
+
 	params := db.UpdateSkillParams{
 		ID: parseUUID(id),
 	}
@@ -744,6 +845,219 @@ func (h *Handler) DeleteSkill(w http.ResponseWriter, r *http.Request) {
 	actorType, actorID := h.resolveActor(r, requestUserID(r), uuidToString(skill.WorkspaceID))
 	h.publish(protocol.EventSkillDeleted, uuidToString(skill.WorkspaceID), actorType, actorID, map[string]any{"skill_id": uuidToString(skill.ID)})
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// --- Skill versioning ---
+
+func (h *Handler) ListSkillVersions(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	skill, ok := h.loadSkillForUser(w, r, id)
+	if !ok {
+		return
+	}
+
+	versions, err := h.Queries.ListSkillVersions(r.Context(), skill.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list skill versions")
+		return
+	}
+
+	resps := make([]SkillVersionResponse, len(versions))
+	for i, v := range versions {
+		resps[i] = skillVersionToResponse(v)
+	}
+	writeJSON(w, http.StatusOK, resps)
+}
+
+func (h *Handler) GetSkillVersion(w http.ResponseWriter, r *http.Request) {
+	skillID := chi.URLParam(r, "id")
+	versionNum := chi.URLParam(r, "version")
+
+	skill, ok := h.loadSkillForUser(w, r, skillID)
+	if !ok {
+		return
+	}
+
+	versionNumber, err := strconv.Atoi(versionNum)
+	if err != nil || versionNumber < 0 {
+		writeError(w, http.StatusBadRequest, "invalid version number")
+		return
+	}
+
+	version, err := h.Queries.GetSkillVersionByNumber(r.Context(), db.GetSkillVersionByNumberParams{
+		SkillID:       skill.ID,
+		VersionNumber: int32(versionNumber),
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "version not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "failed to get skill version")
+		return
+	}
+
+	files, err := h.Queries.ListSkillVersionFiles(r.Context(), version.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list version files")
+		return
+	}
+
+	fileResps := make([]SkillVersionFileResponse, len(files))
+	for i, f := range files {
+		fileResps[i] = skillVersionFileToResponse(f)
+	}
+
+	resp := SkillVersionWithFilesResponse{
+		SkillVersionResponse: skillVersionToResponse(version),
+		Files:                fileResps,
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+func (h *Handler) RollbackSkillToVersion(w http.ResponseWriter, r *http.Request) {
+	skillID := chi.URLParam(r, "id")
+	versionNum := chi.URLParam(r, "version")
+
+	skill, ok := h.loadSkillForUser(w, r, skillID)
+	if !ok {
+		return
+	}
+	if !h.canManageSkill(w, r, skill) {
+		return
+	}
+
+	versionNumber, err := strconv.Atoi(versionNum)
+	if err != nil || versionNumber < 0 {
+		writeError(w, http.StatusBadRequest, "invalid version number")
+		return
+	}
+
+	version, err := h.Queries.GetSkillVersionByNumber(r.Context(), db.GetSkillVersionByNumberParams{
+		SkillID:       skill.ID,
+		VersionNumber: int32(versionNumber),
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "version not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "failed to get skill version")
+		return
+	}
+
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to start transaction")
+		return
+	}
+	defer tx.Rollback(r.Context())
+	qtx := h.Queries.WithTx(tx)
+
+	// Save the current state as a new version before rolling back
+	latestVersionResult, err := qtx.GetLatestVersionNumber(r.Context(), skill.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to get latest version number")
+		return
+	}
+	var latestVersion int32
+	if latestVersionResult != nil {
+		if v, ok := latestVersionResult.(int64); ok {
+			latestVersion = int32(v)
+		} else if v, ok := latestVersionResult.(int32); ok {
+			latestVersion = v
+		}
+	}
+	nextVersionNum := latestVersion + 1
+
+	createdByUUID := skill.CreatedBy
+	if userID := requestUserID(r); userID != "" {
+		createdByUUID = parseUUID(userID)
+	}
+
+	newVersion, err := qtx.CreateSkillVersion(r.Context(), db.CreateSkillVersionParams{
+		SkillID:       skill.ID,
+		VersionNumber: nextVersionNum,
+		Name:          skill.Name,
+		Description:   skill.Description,
+		Content:       skill.Content,
+		Config:        skill.Config,
+		CreatedBy:     createdByUUID,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to create rollback version: "+err.Error())
+		return
+	}
+
+	currentFiles, err := qtx.ListSkillFiles(r.Context(), skill.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list current skill files")
+		return
+	}
+	for _, file := range currentFiles {
+		_, err := qtx.CreateSkillVersionFile(r.Context(), db.CreateSkillVersionFileParams{
+			SkillVersionID: newVersion.ID,
+			Path:           file.Path,
+			Content:        file.Content,
+		})
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to save current file to version: "+err.Error())
+			return
+		}
+	}
+
+	// Now restore the skill to the requested version
+	skill, err = qtx.UpdateSkill(r.Context(), db.UpdateSkillParams{
+		ID:          skill.ID,
+		Name:        pgtype.Text{String: version.Name, Valid: true},
+		Description: pgtype.Text{String: version.Description, Valid: true},
+		Content:     pgtype.Text{String: version.Content, Valid: true},
+		Config:      version.Config,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to rollback skill: "+err.Error())
+		return
+	}
+
+	// Replace files with the version's files
+	if err := qtx.DeleteSkillFilesBySkill(r.Context(), skill.ID); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to delete current skill files")
+		return
+	}
+
+	versionFiles, err := qtx.ListSkillVersionFiles(r.Context(), version.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list version files")
+		return
+	}
+
+	fileResps := make([]SkillFileResponse, 0, len(versionFiles))
+	for _, vf := range versionFiles {
+		sf, err := qtx.UpsertSkillFile(r.Context(), db.UpsertSkillFileParams{
+			SkillID: skill.ID,
+			Path:    vf.Path,
+			Content: vf.Content,
+		})
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to restore skill file: "+err.Error())
+			return
+		}
+		fileResps = append(fileResps, skillFileToResponse(sf))
+	}
+
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to commit rollback")
+		return
+	}
+
+	resp := SkillWithFilesResponse{
+		SkillResponse: skillToResponse(skill),
+		Files:         fileResps,
+	}
+	wsID := h.resolveWorkspaceID(r)
+	actorType, actorID := h.resolveActor(r, requestUserID(r), wsID)
+	h.publish(protocol.EventSkillUpdated, wsID, actorType, actorID, map[string]any{"skill": resp})
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // --- Skill import ---

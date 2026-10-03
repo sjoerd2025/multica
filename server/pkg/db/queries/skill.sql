@@ -168,3 +168,40 @@ FROM agent_skill ask
 JOIN skill s ON s.id = ask.skill_id
 WHERE s.workspace_id = $1
 ORDER BY s.name ASC;
+
+-- Skill Version CRUD
+
+-- name: CreateSkillVersion :one
+INSERT INTO skill_version (skill_id, version_number, name, description, content, config, created_by)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
+RETURNING *;
+
+-- name: ListSkillVersions :many
+SELECT * FROM skill_version
+WHERE skill_id = $1
+ORDER BY version_number DESC;
+
+-- name: GetSkillVersion :one
+SELECT * FROM skill_version
+WHERE id = $1;
+
+-- name: GetSkillVersionByNumber :one
+SELECT * FROM skill_version
+WHERE skill_id = $1 AND version_number = $2;
+
+-- name: GetLatestVersionNumber :one
+SELECT COALESCE(MAX(version_number), 0) AS max_version
+FROM skill_version
+WHERE skill_id = $1;
+
+-- Skill Version File CRUD
+
+-- name: CreateSkillVersionFile :one
+INSERT INTO skill_version_file (skill_version_id, path, content)
+VALUES ($1, $2, $3)
+RETURNING *;
+
+-- name: ListSkillVersionFiles :many
+SELECT * FROM skill_version_file
+WHERE skill_version_id = $1
+ORDER BY path ASC;

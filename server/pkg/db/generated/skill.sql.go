@@ -67,6 +67,75 @@ func (q *Queries) CreateSkill(ctx context.Context, arg CreateSkillParams) (Skill
 	return i, err
 }
 
+const createSkillVersion = `-- name: CreateSkillVersion :one
+
+INSERT INTO skill_version (skill_id, version_number, name, description, content, config, created_by)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
+RETURNING id, skill_id, version_number, name, description, content, config, created_by, created_at
+`
+
+type CreateSkillVersionParams struct {
+	SkillID       pgtype.UUID `json:"skill_id"`
+	VersionNumber int32       `json:"version_number"`
+	Name          string      `json:"name"`
+	Description   string      `json:"description"`
+	Content       string      `json:"content"`
+	Config        []byte      `json:"config"`
+	CreatedBy     pgtype.UUID `json:"created_by"`
+}
+
+// Skill Version CRUD
+func (q *Queries) CreateSkillVersion(ctx context.Context, arg CreateSkillVersionParams) (SkillVersion, error) {
+	row := q.db.QueryRow(ctx, createSkillVersion,
+		arg.SkillID,
+		arg.VersionNumber,
+		arg.Name,
+		arg.Description,
+		arg.Content,
+		arg.Config,
+		arg.CreatedBy,
+	)
+	var i SkillVersion
+	err := row.Scan(
+		&i.ID,
+		&i.SkillID,
+		&i.VersionNumber,
+		&i.Name,
+		&i.Description,
+		&i.Content,
+		&i.Config,
+		&i.CreatedBy,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const createSkillVersionFile = `-- name: CreateSkillVersionFile :one
+
+INSERT INTO skill_version_file (skill_version_id, path, content)
+VALUES ($1, $2, $3)
+RETURNING id, skill_version_id, path, content
+`
+
+type CreateSkillVersionFileParams struct {
+	SkillVersionID pgtype.UUID `json:"skill_version_id"`
+	Path           string      `json:"path"`
+	Content        string      `json:"content"`
+}
+
+// Skill Version File CRUD
+func (q *Queries) CreateSkillVersionFile(ctx context.Context, arg CreateSkillVersionFileParams) (SkillVersionFile, error) {
+	row := q.db.QueryRow(ctx, createSkillVersionFile, arg.SkillVersionID, arg.Path, arg.Content)
+	var i SkillVersionFile
+	err := row.Scan(
+		&i.ID,
+		&i.SkillVersionID,
+		&i.Path,
+		&i.Content,
+	)
+	return i, err
+}
+
 const deleteSkill = `-- name: DeleteSkill :exec
 DELETE FROM skill WHERE id = $1 AND workspace_id = $2
 `
@@ -98,6 +167,19 @@ DELETE FROM skill_file WHERE skill_id = $1
 func (q *Queries) DeleteSkillFilesBySkill(ctx context.Context, skillID pgtype.UUID) error {
 	_, err := q.db.Exec(ctx, deleteSkillFilesBySkill, skillID)
 	return err
+}
+
+const getLatestVersionNumber = `-- name: GetLatestVersionNumber :one
+SELECT COALESCE(MAX(version_number), 0) AS max_version
+FROM skill_version
+WHERE skill_id = $1
+`
+
+func (q *Queries) GetLatestVersionNumber(ctx context.Context, skillID pgtype.UUID) (interface{}, error) {
+	row := q.db.QueryRow(ctx, getLatestVersionNumber, skillID)
+	var max_version interface{}
+	err := row.Scan(&max_version)
+	return max_version, err
 }
 
 const getSkill = `-- name: GetSkill :one
@@ -196,6 +278,55 @@ func (q *Queries) GetSkillInWorkspace(ctx context.Context, arg GetSkillInWorkspa
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.PluginInstallationID,
+	)
+	return i, err
+}
+
+const getSkillVersion = `-- name: GetSkillVersion :one
+SELECT id, skill_id, version_number, name, description, content, config, created_by, created_at FROM skill_version
+WHERE id = $1
+`
+
+func (q *Queries) GetSkillVersion(ctx context.Context, id pgtype.UUID) (SkillVersion, error) {
+	row := q.db.QueryRow(ctx, getSkillVersion, id)
+	var i SkillVersion
+	err := row.Scan(
+		&i.ID,
+		&i.SkillID,
+		&i.VersionNumber,
+		&i.Name,
+		&i.Description,
+		&i.Content,
+		&i.Config,
+		&i.CreatedBy,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const getSkillVersionByNumber = `-- name: GetSkillVersionByNumber :one
+SELECT id, skill_id, version_number, name, description, content, config, created_by, created_at FROM skill_version
+WHERE skill_id = $1 AND version_number = $2
+`
+
+type GetSkillVersionByNumberParams struct {
+	SkillID       pgtype.UUID `json:"skill_id"`
+	VersionNumber int32       `json:"version_number"`
+}
+
+func (q *Queries) GetSkillVersionByNumber(ctx context.Context, arg GetSkillVersionByNumberParams) (SkillVersion, error) {
+	row := q.db.QueryRow(ctx, getSkillVersionByNumber, arg.SkillID, arg.VersionNumber)
+	var i SkillVersion
+	err := row.Scan(
+		&i.ID,
+		&i.SkillID,
+		&i.VersionNumber,
+		&i.Name,
+		&i.Description,
+		&i.Content,
+		&i.Config,
+		&i.CreatedBy,
+		&i.CreatedAt,
 	)
 	return i, err
 }
@@ -594,6 +725,73 @@ func (q *Queries) ListSkillSummariesByWorkspace(ctx context.Context, workspaceID
 			&i.CreatedBy,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listSkillVersionFiles = `-- name: ListSkillVersionFiles :many
+SELECT id, skill_version_id, path, content FROM skill_version_file
+WHERE skill_version_id = $1
+ORDER BY path ASC
+`
+
+func (q *Queries) ListSkillVersionFiles(ctx context.Context, skillVersionID pgtype.UUID) ([]SkillVersionFile, error) {
+	rows, err := q.db.Query(ctx, listSkillVersionFiles, skillVersionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []SkillVersionFile{}
+	for rows.Next() {
+		var i SkillVersionFile
+		if err := rows.Scan(
+			&i.ID,
+			&i.SkillVersionID,
+			&i.Path,
+			&i.Content,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listSkillVersions = `-- name: ListSkillVersions :many
+SELECT id, skill_id, version_number, name, description, content, config, created_by, created_at FROM skill_version
+WHERE skill_id = $1
+ORDER BY version_number DESC
+`
+
+func (q *Queries) ListSkillVersions(ctx context.Context, skillID pgtype.UUID) ([]SkillVersion, error) {
+	rows, err := q.db.Query(ctx, listSkillVersions, skillID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []SkillVersion{}
+	for rows.Next() {
+		var i SkillVersion
+		if err := rows.Scan(
+			&i.ID,
+			&i.SkillID,
+			&i.VersionNumber,
+			&i.Name,
+			&i.Description,
+			&i.Content,
+			&i.Config,
+			&i.CreatedBy,
+			&i.CreatedAt,
 		); err != nil {
 			return nil, err
 		}

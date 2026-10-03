@@ -2305,10 +2305,13 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Get("/files", h.ListSkillFiles)
 					r.Put("/files", h.UpsertSkillFile)
 					r.Delete("/files/{fileId}", h.DeleteSkillFile)
-				})
-			})
+					r.Get("/versions", h.ListSkillVersions)
+					r.Get("/versions/{version}", h.GetSkillVersion)
+					r.Post("/versions/{version}/rollback", h.RollbackSkillToVersion)
+					})
+					})
 
-			// Dashboard — workspace-wide token + run-time rollups for the
+					// Dashboard — workspace-wide token + run-time rollups for the
 			// "/{slug}/dashboard" page. Optional ?project_id filter scopes
 			// the rollup to a single project.
 			r.Route("/api/dashboard", func(r chi.Router) {
