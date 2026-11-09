@@ -75,6 +75,7 @@
   ],
   "scripts": [
     "scripts/generate-reserved-slugs.mjs",
+    "scripts/generate-text-preview-types.mjs",
     "scripts/selfhost-config.test.sh",
     "scripts/drop-database.sh",
     "scripts/remove-worktree.sh",

@@ -899,6 +899,8 @@ jobs:
         run: |
           node scripts/generate-reserved-slugs.mjs
           git diff --exit-code -- packages/core/paths/reserved-slugs.ts
+          node scripts/generate-text-preview-types.mjs
+          git diff --exit-code -- packages/core/attachments/text-preview-types.ts
 
       - name: Setup Helm
         uses: azure/setup-helm@v4

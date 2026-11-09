@@ -29,6 +29,7 @@
     "clean": "turbo clean && rm -rf node_modules",
     "ui:add": "cd packages/ui && npx shadcn@latest add",
     "generate:reserved-slugs": "node scripts/generate-reserved-slugs.mjs",
+    "generate:text-preview-types": "node scripts/generate-text-preview-types.mjs",
     "dev:ui-lab": "pnpm --filter @multica/ui-lab dev"
   },
   "engines": {

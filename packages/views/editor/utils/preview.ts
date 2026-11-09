@@ -13,6 +13,11 @@
  */
 
 import { isImageAttachment } from "@multica/core/attachments/image-sequence";
+import {
+  TEXT_EXTENSIONS,
+  TEXT_CONTENT_TYPES,
+  TEXT_BASENAMES,
+} from "@multica/core/attachments/text-preview-types";
 
 export type PreviewKind =
   | "image"
@@ -99,47 +104,6 @@ const BASENAME_LANGUAGE_MAP: Record<string, string> = {
   ".env": "plaintext",
   ".gitignore": "plaintext",
 };
-
-// IMPORTANT — KEEP IN SYNC with isTextPreviewable() in
-// server/internal/handler/file.go. If an extension lands here but the proxy
-// rejects it, the user sees a 415 fallback in the modal. If the proxy accepts
-// but this set doesn't, the Eye button doesn't appear at all.
-//
-// TODO(follow-up): extract to a JSON single-source-of-truth + generator
-// (mirror reserved-slugs pattern in server/internal/handler/reserved_slugs.json).
-const TEXT_EXTENSIONS = new Set<string>([
-  "md", "markdown", "txt", "log", "csv", "tsv",
-  "html", "htm", "json", "jsonl", "ndjson", "xml",
-  "yml", "yaml", "toml", "ini", "conf",
-  "dockerfile", "makefile", "gitignore",
-  "sh", "bash", "zsh",
-  "py", "rb", "go", "rs",
-  "ts", "tsx", "js", "jsx", "mjs", "cjs",
-  "css", "scss", "sass", "less",
-  "sql",
-  "java", "kt", "swift",
-  "c", "cc", "cpp", "h", "hpp",
-  "cs", "php", "lua", "vim",
-]);
-
-const TEXT_CONTENT_TYPES = new Set<string>([
-  "application/json",
-  "application/x-ndjson",
-  "application/javascript",
-  "application/xml",
-  "application/x-yaml",
-  "application/yaml",
-  "application/toml",
-  "application/x-sh",
-  "application/x-httpd-php",
-]);
-
-const TEXT_BASENAMES = new Set<string>([
-  "dockerfile",
-  "makefile",
-  ".env",
-  ".gitignore",
-]);
 
 const TABLE_CONTENT_TYPES = new Set<string>([
   "text/csv",
